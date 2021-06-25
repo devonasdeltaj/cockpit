@@ -19,32 +19,20 @@
 @import "../lib/page.scss";
 @import "../../node_modules/@patternfly/patternfly/components/Card/card.css";
 @import "../lib/ct-card.scss";
+@import "@patternfly/patternfly/utilities/Flex/flex.scss";
+@import "@patternfly/patternfly/utilities/Text/text.scss";
 
 #storage .pf-c-card {
     @extend .ct-card;
-}
-
-#storage {
-    overflow: auto;
-}
-
-.pf-c-page__main {
-    overflow: visible;
 }
 
 #storage .pf-l-gallery {
     --pf-l-gallery--GridTemplateColumns: 1fr;
 }
 
-#main-storage.pf-c-page,
 #storage-detail .pf-c-page__main-section,
 #storage-detail .pf-c-page__main-nav {
-    padding: var(--pf-global--gutter);
     overflow: auto;
-}
-
-#main-storage > .pf-c-page__main {
-    padding-bottom: var(--pf-global--spacer--md);
 }
 
 #storage .create-storage {
@@ -76,20 +64,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     vertical-align: top;
-}
-
-#storage_raids .row span,
-#storage_vgs .row span,
-#storage_drives .row span {
-    padding: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-#storage_raids .row span.raid-size,
-#storage_vgs .row span.vg-size {
-    text-align: right;
 }
 
 .dialog-select-row-table {
@@ -140,14 +114,6 @@
 
 .dialog-select-row-table th:last-child {
     padding-right: 0.75em;
-}
-
-.arming-zone .needs-arming {
-    display: none;
-}
-
-.arming-zone.armed .needs-arming {
-    display: block;
 }
 
 /* Slider
@@ -241,11 +207,6 @@ td.storage-icon {
     width: 48px;
 }
 
-span.rate-gap {
-    display: inline-block;
-    width: 1em;
-}
-
 div.progress {
     width: 100%;
     height: var(--pf-global--FontSize-xs);
@@ -253,6 +214,10 @@ div.progress {
 
 #detail-header div.progress {
     min-width: 250px;
+}
+
+#storage-detail .ct-table {
+    border-top: var(--pf-global--BorderWidth--sm) solid var(--pf-global--BorderColor--100);
 }
 
 td.usage-text {
@@ -280,67 +245,12 @@ td.job-action {
     height: 180px;
 }
 
-.action-dropdown-menu {
-    right: 0px;
-    left: auto;
-    min-width: 0;
-    text-align: left;
-}
-
 .content-nav-item-warning:first-child {
     padding-right: var(--pf-global--spacer--sm);
 }
 
-.content-item {
-    width: 100%;
-}
-
-.content-item table {
-    width: 100%;
-}
-
 .content-action {
     text-align: right;
-}
-
-table.mdraid-item {
-    width: 100%;
-}
-
-td.mdraid-slot {
-    width: 20px;
-    text-align: center;
-}
-
-td.mdraid-states {
-    width: 100px;
-    text-align: right;
-}
-
-td.mdraid-states .state-danger {
-    color: red;
-}
-
-td.mdraid-action {
-    text-align: right;
-    width: 10em;
-}
-
-table.vgroup-item {
-    width: 100%;
-}
-
-td.vgroup-action {
-    text-align: right;
-}
-
-.dialog-arrow {
-    color: black;
-    cursor: pointer;
-}
-
-.dialog-arrow .fa {
-    width: 1em;
 }
 
 .dialog-item-tooltip {
@@ -492,11 +402,11 @@ td.storage-action {
 
 .sigkey-hash {
     font-family: monospace;
-    font-size: 200%;
+    font-size: 140%;
 }
 
 .inline-pre {
-    display: inline;
+    display: inline-block;
     padding: 4px;
 }
 
@@ -567,11 +477,7 @@ td.storage-action {
 
 .sidepanel-row {
     padding: var(--pf-global--spacer--sm) var(--pf-global--spacer--lg);
-    border-bottom: var(--pf-global--BorderWidth--sm) solid var(--pf-global--BorderColor--100);
-}
-
-.sidepanel-row:last-child {
-    border-bottom: none;
+    border-top: var(--pf-global--BorderWidth--sm) solid var(--pf-global--BorderColor--100);
 }
 
 .sidepanel-row.pf-c-empty-state {
@@ -585,7 +491,7 @@ td.storage-action {
 }
 
 .sidepanel-row-name {
-    font-size: var(--pf-global--FontSize--md);
+    font-size: var(--pf-global--FontSize--sm);
 }
 
 .sidepanel-row-info {

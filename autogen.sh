@@ -39,8 +39,6 @@ if [ -z "$(which glib-gettextize)" ]; then
     exit 1
 fi
 
-tools/npm-install
-
 rm -rf autom4te.cache
 
 autoreconf -f -i -I tools
@@ -58,8 +56,6 @@ if test -z "${NOCONFIGURE:-}"; then
         echo "to pass any to it, please specify them on the $0 command line."
     fi
 fi
-
-tools/make-bots
 
 if test -n "${NOCONFIGURE:-}"; then
     exit 0

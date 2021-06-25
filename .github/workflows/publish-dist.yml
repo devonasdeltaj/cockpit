@@ -8,57 +8,34 @@ jobs:
   run:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Download build-dist artifacts
-        uses: dawidd6/action-download-artifact@v2
+        # 2.14.0; if you update this, audit the diff and ensure that it does not leak/abuse secrets
+        uses: dawidd6/action-download-artifact@b9571484721e8187f1fd08147b497129f8972c74
         with:
+          name: webpack-jumpstart
           workflow: build-dist
           run_id: ${{ github.event.workflow_run.id }}
+          path: artifact
 
       - name: Set up configuration and secrets
         run: |
           printf '[user]\n\tname = Cockpit Project\n\temail=cockpituous@gmail.com\n' > ~/.gitconfig
-          echo '${{ secrets.COCKPITUOUS_TOKEN }}' > ~/.config/github-token
           # we push to -dist repo via https://github.com, that needs our cockpituous token
           git config --global credential.helper store
           echo 'https://token:${{ secrets.COCKPITUOUS_TOKEN }}@github.com' >> ~/.git-credentials
 
-      - name: Commit dist tarball dist repo
+      - name: Commit to dist repo
         run: |
           set -ex
+          mkdir dist-repo
+          cd dist-repo
+          tar -xf ../artifact/webpack-jumpstart.tar dist package-lock.json
+          git init
+          git add dist package-lock.json
+          git commit -m "Build for ${{ github.event.workflow_run.head_sha }}"
+          tag='sha-${{ github.event.workflow_run.head_sha }}'
+          git tag "$tag"
 
-          # we need a fully predictable name/URL, and git introduces these
-          # additional numbers into the version; so wrap it in a predictable named tar
-          sha=$(ls -d dist-* | sed 's/dist-//')
-
-          # multiple parallel workflows race against each other, so the final
-          # `git push` may fail
-          rc=1
-          for retry in $(seq 5); do
-              git clone https://github.com/${{ github.repository }}-dist.git dist-repo
-              tar -cvf "dist-repo/${sha}.tar" -C "dist-$sha" .
-
-              # freshly created empty repo?
-              cd dist-repo
-              git rev-parse HEAD >/dev/null 2>&1 || git init
-              git add "${sha}.tar"
-              git commit -m "Build for $sha"
-
-              # remove tarballs older than 3 days
-              now=$(date +%s)
-              for f in *.tar; do
-                  fmtime=$(git log --pretty=%at -n1 -- $f)
-                  [ $(($now - $fmtime)) -lt 259200 ] || git rm $f
-              done
-              [ -z "$(git status --short)" ] || git commit -m 'Drop old builds'
-
-              if git push; then
-                  rc=0
-                  break
-              else
-                  echo "ERROR: conflict? Retrying git commit"
-                  rm -rf dist-repo
-              fi
-          done
-          exit $rc
-
+          git push https://github.com/${{ github.repository }}-dist.git "$tag"

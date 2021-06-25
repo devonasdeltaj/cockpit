@@ -226,8 +226,8 @@ export function ServerTime() {
             sub_status: null
         };
 
-        // flag for tests that timedated proxy got activated
-        if (timedate.CanNTP !== undefined && timedate1_service.unit && timedate1_service.unit.Id)
+        // flag for tests that timedated/timesyncd proxies got initialized
+        if (timedate.CanNTP !== undefined && timedate1_service.unit && timedate1_service.unit.Id && timesyncd_service.enabled !== null)
             status.initialized = true;
 
         status.active = timedate.NTP;
@@ -265,29 +265,25 @@ export function ServerTime() {
          * - systemd-timedated is answering for
          *   org.freedesktop.timedate1 as opposed to, say, timedatex.
          *
-         * - systemd-timesyncd is actually available.
+         * - systemd-timesyncd is enabled (false if chrony is being used)
          *
          * The better alternative would be to have an API in
          * o.fd.timedate1 for managing the list of NTP server
          * candidates.
          */
-
-        const timedate1 = timedate1_service;
-        const timesyncd = timesyncd_service;
-
         const result = {
             supported: false,
             enabled: false,
             servers: []
         };
 
-        if (!timedate1.exists || timedate1.unit.Id !== "systemd-timedated.service") {
+        if (!timedate1_service.exists || timedate1_service.unit.Id !== "systemd-timedated.service") {
             console.log("systemd-timedated not in use, ntp server configuration not supported");
             return Promise.resolve(result);
         }
 
-        if (!timesyncd.exists) {
-            console.log("systemd-timesyncd not available, ntp server configuration not supported");
+        if (!timesyncd_service.enabled) {
+            console.log("systemd-timesyncd not enabled, ntp server configuration not supported");
             return Promise.resolve(result);
         }
 
@@ -644,30 +640,16 @@ function change_systime_dialog(server_time, timezone) {
                                                                     state.manual_hours,
                                                                     state.manual_minutes));
                     } else {
-                    /* HACK - https://bugzilla.redhat.com/show_bug.cgi?id=1272085
-                     *
-                     * Switch off NTP, bump the clock by one microsecond to
-                     * clear the NTPSynchronized status, write the config
-                     * file, and switch NTP back on.
-                     *
-                     */
+                        // Switch off NTP, write the config file, and switch NTP back on
                         return server_time.set_ntp(false)
-                                .then(function() {
-                                    return server_time.bump_time(1);
-                                })
-                                .then(function() {
+                                .then(() => {
                                     if (state.custom_ntp.supported)
                                         return server_time.set_custom_ntp(state.custom_ntp.servers.filter(s => !!s),
                                                                           state.mode == "ntp_time_custom");
                                     else
                                         return Promise.resolve();
                                 })
-                                .then(function() {
-                                    // NTPSynchronized should be false now.  Make
-                                    // sure we pick that up immediately.
-                                    server_time.poll_ntp_synchronized();
-                                    return server_time.set_ntp(true);
-                                });
+                                .then(() => server_time.set_ntp(true));
                     }
                 });
     }

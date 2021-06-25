@@ -156,9 +156,6 @@ AM_CONDITIONAL(WITH_COCKPIT_SSH, test "$enable_ssh" = "yes")
 AC_CHECK_HEADER([security/pam_appl.h], ,
   [AC_MSG_ERROR([Couldn't find PAM headers. Try installing pam-devel])]
 )
-AC_CHECK_LIB(pam, pam_open_session, [ true ],
-  [AC_MSG_ERROR([Couldn't find PAM library. Try installing pam-devel])]
-)
 PAM_LIBS="-lpam"
 COCKPIT_SESSION_LIBS="$COCKPIT_SESSION_LIBS $PAM_LIBS"
 COCKPIT_WS_LIBS="$COCKPIT_WS_LIBS $PAM_LIBS"
@@ -216,11 +213,6 @@ fi
 
 AM_CONDITIONAL([ENABLE_PCP], [test "$enable_pcp" = "yes"])
 
-# gssapi
-AC_CHECK_LIB(gssapi_krb5, gss_store_cred, [ true ],
-  [AC_MSG_ERROR([Couldn't find GSSAPI KRB5 library. Try installing krb5-devel])]
-)
-
 # systemd
 AC_ARG_WITH([systemdunitdir], [AC_HELP_STRING([--with-systemdunitdir=DIR],
                                               [directory to install systemd unit files in])])
@@ -263,11 +255,6 @@ if test -x "$MSGCAT" -a -x "$MSGFMT" -a -x "$MSGMERGE" -a -x "$MSGGREP" -a -x "$
 else
   AC_MSG_ERROR([no. Please install gettext tools])
 fi
-
-# go
-
-AC_PATH_PROG([GOLANG], [go])
-AM_CONDITIONAL([WITH_GOLANG], [test -n "$GOLANG"])
 
 # usermod
 #

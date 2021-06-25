@@ -59,8 +59,6 @@ import * as PK from "packagekit.js";
 import * as python from "python.js";
 import callTracerScript from 'raw-loader!./callTracer.py';
 
-import "listing.scss";
-
 const _ = cockpit.gettext;
 
 // "available" heading is built dynamically
@@ -275,7 +273,7 @@ function updateItem(info, pkgNames, key) {
     const pkgs = pkgList;
     let pkgsTruncated = pkgs;
     if (pkgList.length > 4)
-        pkgsTruncated = pkgList.slice(0, 4).concat(<span>…</span>);
+        pkgsTruncated = pkgList.slice(0, 4).concat(<span key="more">…</span>);
 
     let descriptionFirstLine = (info.description || "").trim();
     if (descriptionFirstLine.indexOf("\n") >= 0)
@@ -480,6 +478,7 @@ class ApplyUpdates extends React.Component {
     }
 
     componentDidMount() {
+        this._mounted = true;
         var transactionPath = this.props.transaction;
 
         PK.watchTransaction(transactionPath, {
@@ -489,11 +488,14 @@ class ApplyUpdates extends React.Component {
                 // small timeout to avoid excessive overlaps from the next PackageKit progress signal
                 PK.call(transactionPath, "org.freedesktop.DBus.Properties", "GetAll", [PK.transactionInterface], { timeout: 500 })
                         .done(reply => {
+                            if (this._mounted === false)
+                                return;
+
                             const percent = reply[0].Percentage.v;
                             let remain = -1;
                             if ("RemainingTime" in reply[0])
                                 remain = reply[0].RemainingTime.v;
-                            // info: see PK_STATUS_* at https://github.com/hughsie/PackageKit/blob/master/lib/packagekit-glib2/pk-enum.h
+                            // info: see PK_STATUS_* at https://github.com/PackageKit/PackageKit/blob/main/lib/packagekit-glib2/pk-enum.h
                             const newActions = this.state.actions.slice();
                             newActions.push({ status: info, package: pfields[0] + " " + pfields[1] + " (" + pfields[2] + ")" });
 
@@ -516,6 +518,10 @@ class ApplyUpdates extends React.Component {
                         });
             },
         });
+    }
+
+    componentWillUnmount() {
+        this._mounted = false;
     }
 
     render() {
@@ -938,11 +944,15 @@ class OsUpdates extends React.Component {
     }
 
     componentDidMount() {
+        this._mounted = true;
         this.callTracer(null);
 
         // check if there is an upgrade in progress already; if so, switch to "applying" state right away
         PK.call("/org/freedesktop/PackageKit", "org.freedesktop.PackageKit", "GetTransactionList", [])
                 .done(result => {
+                    if (!this._mounted)
+                        return;
+
                     const transactions = result[0];
                     const promises = transactions.map(transactionPath => PK.call(
                         transactionPath, "org.freedesktop.DBus.Properties", "Get", [PK.transactionInterface, "Role"]));
@@ -967,6 +977,10 @@ class OsUpdates extends React.Component {
                             });
                 })
                 .fail(this.handleLoadError);
+    }
+
+    componentWillUnmount() {
+        this._mounted = false;
     }
 
     callTracer(state) {
@@ -996,6 +1010,10 @@ class OsUpdates extends React.Component {
 
     handleLoadError(ex) {
         console.warn("loading available updates failed:", JSON.stringify(ex));
+
+        if (!this._mounted)
+            return;
+
         if (ex.problem === "not-found")
             ex = _("PackageKit is not installed");
         this.state.errorMessages.push(ex.detail || ex.message || ex);
@@ -1352,14 +1370,16 @@ class OsUpdates extends React.Component {
                                      paragraph={
                                          <TextContent>
                                              <Text component={TextVariants.p}>
-                                                 {this.state.errorMessages.map(m => <span key={m}>{m}</span>)}
+                                                 {this.state.errorMessages
+                                                         .filter((m, index) => index == 0 || m != this.state.errorMessages[index - 1])
+                                                         .map(m => <div key={m}>{m}</div>)}
                                              </Text>
                                              <Text component={TextVariants.p}>
                                                  {_("Please reload the page after resolving the issue.")}
                                              </Text>
                                          </TextContent>
                                      }
-                    />;
+                    />
                 </>
             );
 
@@ -1466,6 +1486,9 @@ class OsUpdates extends React.Component {
         this.setState({ state: "refreshing", loadPercent: null });
         PK.cancellableTransaction("RefreshCache", [true], data => this.setState({ loadPercent: data.percentage }))
                 .then(() => {
+                    if (this._mounted === false)
+                        return;
+
                     this.setState({ timeSinceRefresh: 0 });
                     this.loadUpdates();
                 })

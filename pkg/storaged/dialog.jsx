@@ -226,13 +226,13 @@ import {
     Form, FormGroup,
     Radio,
     Select as TypeAheadSelect, SelectOption, SelectVariant,
-    Spinner,
+    Spinner, Split,
     TextInput as TextInputPF4,
     Tooltip, TooltipPosition,
 } from "@patternfly/react-core";
 import { InfoCircleIcon } from "@patternfly/react-icons";
 
-import { show_modal_dialog } from "cockpit-components-dialog.jsx";
+import { show_modal_dialog, apply_modal_dialog } from "cockpit-components-dialog.jsx";
 
 import { fmt_size, block_name, format_size_and_text } from "./utils.js";
 import client from "./client.js";
@@ -253,7 +253,7 @@ const Row = ({ field, values, errors, onChange }) => {
         onChange(tag);
     }
 
-    const children = field.render(values[tag], change, validated);
+    const children = field.render(values[tag], change, validated, error);
 
     if (title || title == "") {
         let titleLabel = title;
@@ -271,14 +271,15 @@ const Row = ({ field, values, errors, onChange }) => {
                 { children }
             </FormGroup>
         );
-    } else {
+    } else if (!field.bare) {
         return (
             <FormGroup validated={validated}
-                       helperTextInvalid={error || explanation} hasNoPaddingTop={field.hasNoPaddingTop}>
+                       helperTextInvalid={error} helperText={explanation} hasNoPaddingTop={field.hasNoPaddingTop}>
                 { children }
             </FormGroup>
         );
-    }
+    } else
+        return children;
 };
 
 function is_visible(field, values) {
@@ -299,7 +300,8 @@ const Body = ({ body, fields, values, errors, isFormHorizontal, onChange }) => {
         if (rows.length === 0)
             return null;
         else if (index === undefined) // top-level
-            return <Form isHorizontal={isFormHorizontal !== false}>{ rows }</Form>;
+            return <Form onSubmit={apply_modal_dialog}
+                         isHorizontal={isFormHorizontal !== false}>{ rows }</Form>;
         else // nested
             return <FormGroup key={index}>{ rows }</FormGroup>;
     }
@@ -563,16 +565,17 @@ export const SelectOneRadio = (tag, title, options) => {
         title: title,
         options: options,
         initial_value: options.value || options.choices[0].value,
+        hasNoPaddingTop: true,
 
         render: (val, change) => {
             return (
-                <FormGroup isInline data-field={tag} data-field-type="select-radio">
+                <Split hasGutter data-field={tag} data-field-type="select-radio">
                     { options.choices.map(c => (
                         <Radio key={c.value} isChecked={val == c.value} data-data={c.value}
                             id={tag + '.' + c.value}
                             onChange={event => change(c.value)} label={c.title} />))
                     }
-                </FormGroup>
+                </Split>
             );
         }
     };

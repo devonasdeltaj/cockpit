@@ -66,12 +66,14 @@ class StorageHelpers:
 
         Return the device name.
         '''
+        # HACK: https://bugzilla.redhat.com/show_bug.cgi?id=1969408
+        # It would be nicer to remove $F immediately after the call to
+        # losetup, but that will break some versions of lvm2.
         dev = self.machine.execute("set -e; F=$(mktemp /var/tmp/loop.XXXX); "
                                    "dd if=/dev/zero of=$F bs=1M count=%s; "
-                                   "losetup --find --show $F; "
-                                   "rm $F" % size).strip()
+                                   "losetup --find --show $F" % size).strip()
         # right after unmounting the device is often still busy, so retry a few times
-        self.addCleanup(self.machine.execute, "umount {0}; until losetup -d {0}; do sleep 1; done".format(dev), timeout=10)
+        self.addCleanup(self.machine.execute, "umount {0}; rm $(losetup -n -O BACK-FILE -l {0}); until losetup -d {0}; do sleep 1; done".format(dev), timeout=10)
         return dev
 
     def force_remove_disk(self, device):
@@ -124,7 +126,7 @@ class StorageHelpers:
 
     def content_tab_expand(self, row_index, tab_index):
         tab_btn = self.content_row_tbody(row_index) + " .ct-listing-panel-head > nav ul li:nth-child(%d) a" % tab_index
-        tab = self.content_row_tbody(row_index) + " .ct-listing-panel-body:nth-child(%d)" % (tab_index + 1)
+        tab = self.content_row_tbody(row_index) + " .ct-listing-panel-body[data-key=%d]" % (tab_index - 1)
         self.content_row_expand(row_index)
         self.browser.click(tab_btn)
         self.browser.wait_visible(tab)
@@ -164,7 +166,7 @@ class StorageHelpers:
             row = self.content_row_tbody(row_index)
             row_item = row + " tr td.pf-c-table__toggle button"
             tab_btn = row + " .ct-listing-panel-head > nav ul li:nth-child(%d) a" % tab_index
-            tab = row + " .ct-listing-panel-body:nth-child(%d)" % (tab_index + 1)
+            tab = row + " .ct-listing-panel-body[data-key=%d]" % (tab_index - 1)
             cell = tab + " dt:contains(%s) + *" % title
 
             # The DOM might change at any time while we are inspecting
@@ -457,6 +459,12 @@ class StorageCase(MachineCase, StorageHelpers):
             self.storaged_version = list(map(int, m.group(1).split(".")))
         else:
             self.storaged_version = [0]
+
+        crypto_types = self.machine.execute("busctl --system get-property org.freedesktop.UDisks2 /org/freedesktop/UDisks2/Manager org.freedesktop.UDisks2.Manager SupportedEncryptionTypes || true")
+        if "luks2" in crypto_types:
+            self.default_crypto_type = "luks2"
+        else:
+            self.default_crypto_type = "luks1"
 
         if "debian" in self.machine.image or "ubuntu" in self.machine.image:
             # Debian's udisks has a patch to use FHS /media directory

@@ -17,13 +17,9 @@
  * along with Cockpit; If not, see <http://www.gnu.org/licenses/>.
  */
 
-import cockpit from 'cockpit';
-import React from 'react';
+import React, { useState } from 'react';
 import moment from "moment";
 
-import { EmptyStatePanel } from "../lib/cockpit-components-empty-state.jsx";
-import { ListingTable } from "cockpit-components-table.jsx";
-import { JournalOutput } from "cockpit-components-logs-panel.jsx";
 import {
     Alert,
     Breadcrumb, BreadcrumbItem,
@@ -31,19 +27,31 @@ import {
     Card, CardTitle, CardBody, Gallery,
     DescriptionList, DescriptionListGroup, DescriptionListTerm, DescriptionListDescription,
     Flex, FlexItem,
-    Page, PageSection,
+    Modal,
+    Page, PageSection, PageSectionVariants,
     Progress, ProgressVariant,
     Select, SelectOption,
+    Switch,
+    Text, TextContent, TextVariants,
     Tooltip,
 } from '@patternfly/react-core';
 import { Table, TableHeader, TableBody, TableGridBreakpoint, TableVariant, TableText, RowWrapper, cellWidth } from '@patternfly/react-table';
-import { ExclamationCircleIcon } from '@patternfly/react-icons';
+import { ExclamationCircleIcon, CogIcon, ExternalLinkAltIcon } from '@patternfly/react-icons';
 
+import cockpit from 'cockpit';
 import * as machine_info from "../lib/machine-info.js";
 import * as packagekit from "packagekit.js";
-import { install_dialog } from "cockpit-components-install-dialog.jsx";
-
+import * as service from "service";
+import { superuser } from "superuser";
 import { journal } from "journal";
+import { useObject, useEvent } from "hooks.js";
+
+import { EmptyStatePanel } from "../lib/cockpit-components-empty-state.jsx";
+import { ListingTable } from "cockpit-components-table.jsx";
+import { JournalOutput } from "cockpit-components-logs-panel.jsx";
+import { install_dialog } from "cockpit-components-install-dialog.jsx";
+import { ModalError } from "cockpit-components-inline-notification.jsx";
+import { FirewalldRequest } from "cockpit-components-firewalld-request.jsx";
 import "journal.css";
 
 const MSEC_PER_H = 3600000;
@@ -466,7 +474,7 @@ class CurrentMetrics extends React.Component {
                         </div>
 
                         { this.state.loadAvg &&
-                            <DescriptionList isHorizontal>
+                            <DescriptionList className="pf-m-horizontal-on-sm">
                                 <DescriptionListGroup>
                                     <DescriptionListTerm>{ _("Load") }</DescriptionListTerm>
                                     <DescriptionListDescription id="load-avg">{this.state.loadAvg}</DescriptionListDescription>
@@ -723,7 +731,7 @@ class MetricsMinute extends React.Component {
                 { this.props.events.events.map(t => <span className="type" key={ t }>{ RESOURCES[t].event_description }</span>) }
                 <div className="details">
                     <time>{ moment(timestamp).format('LT') }</time>
-                    {this.state.expanded && this.state.logsUrl ? <Button variant="link" isInline onClick={e => cockpit.jump(this.state.logsUrl)}>{_("All logs")}</Button> : null}
+                    {this.state.expanded && this.state.logsUrl && this.state.logs && this.state.logs.length ? <Button variant="link" isInline onClick={e => cockpit.jump(this.state.logsUrl)}>{_("View all logs")}</Button> : null}
                 </div>
             </div>;
 
@@ -865,6 +873,171 @@ class MetricsHour extends React.Component {
     }
 }
 
+const persistentServiceState = proxy => ['running', 'stopped', 'failed', undefined].indexOf(proxy.state) >= 0;
+const validServiceState = proxy => ['running', 'stopped'].indexOf(proxy.state) >= 0;
+
+const PCPConfig = ({ buttonVariant, firewalldRequest }) => {
+    const [dialogVisible, setDialogVisible] = useState(false);
+    const [dialogError, setDialogError] = useState(null);
+    const [dialogLoggerValue, setDialogLoggerValue] = useState(false);
+    const [dialogProxyValue, setDialogProxyValue] = useState(null);
+    const [dialogInitialProxyValue, setDialogInitialProxyValue] = useState(null);
+    const [pending, setPending] = useState(false);
+
+    const s_pmlogger = useObject(() => service.proxy("pmlogger.service"), null, []);
+    const s_pmproxy = useObject(() => service.proxy("pmproxy.service"), null, []);
+    // redis.service on Fedora/RHEL, redis-server.service on Debian/Ubuntu with an Alias=redis
+    const s_redis = useObject(() => service.proxy("redis.service"), null, []);
+    const s_redis_server = useObject(() => service.proxy("redis-server.service"), null, []);
+
+    useEvent(superuser, "changed");
+    useEvent(s_pmlogger, "changed");
+    useEvent(s_redis, "changed");
+    useEvent(s_redis_server, "changed");
+
+    let real_redis;
+    let redis_name;
+    if (s_redis_server.exists) {
+        real_redis = s_redis_server;
+        redis_name = "redis-server.service";
+    } else {
+        real_redis = s_redis;
+        redis_name = "redis.service";
+    }
+
+    debug("PCPConfig s_pmlogger.state", s_pmlogger.state);
+    debug("PCPConfig s_pmproxy state", s_pmproxy.state, "redis exists", s_redis.exists, "state", s_redis.state, "redis-server exists", s_redis_server.exists, "state", s_redis_server.state);
+
+    if (!superuser.allowed)
+        return null;
+
+    const handleSave = () => {
+        setPending(true);
+        const redis_enable_cmd = `mkdir -p /etc/systemd/system/pmproxy.service.wants; ln -sf ../${redis_name} /etc/systemd/system/pmproxy.service.wants/${redis_name}`;
+        const redis_disable_cmd = `rm -f /etc/systemd/system/pmproxy.service.wants/${redis_name}; rmdir -p /etc/systemd/system/pmproxy.service.wants 2>/dev/null || true`;
+        let action;
+
+        // enable/disable does a daemon-reload, which interferes with start on some distros; so don't run them in parallel
+        if (dialogLoggerValue)
+            action = s_pmlogger.start().then(() => s_pmlogger.enable());
+        else
+            action = s_pmlogger.stop().finally(() => s_pmlogger.disable());
+
+        if (dialogProxyValue !== null && dialogInitialProxyValue !== dialogProxyValue) {
+            if (dialogProxyValue === true) {
+                // pmproxy.service needs to (re)start *after* redis to recognize it
+                action = action
+                        .then(() => real_redis.start())
+                        .then(() => s_pmproxy.restart())
+                        // turn redis into a dependency, as the metrics API requires it
+                        .then(() => cockpit.script(redis_enable_cmd, { superuser: "require", err: "message" }))
+                        .then(() => s_pmproxy.enable());
+            } else {
+                // don't stop redis here -- it's a shared service, other things may be using it
+                action = action
+                        .then(() => s_pmproxy.stop())
+                        .then(() => cockpit.script(redis_disable_cmd, { superuser: "require", err: "message" }))
+                        .then(() => s_pmproxy.disable());
+            }
+        }
+
+        action
+                .then(() => {
+                    setDialogVisible(false);
+                    if (dialogProxyValue && !dialogInitialProxyValue && firewalldRequest)
+                        firewalldRequest({ service: "pmproxy", title: _("Open the pmproxy service in the firewall to share metrics.") });
+                    else
+                        firewalldRequest(null);
+                })
+                .catch(err => setDialogError(err.toString()))
+                .finally(() => setPending(false));
+    };
+
+    // the package is likely not installed; TODO: install it on demand
+    let pmproxy_option = null;
+    if (real_redis.exists && s_pmproxy.exists) {
+        pmproxy_option = (
+            <Switch id="switch-pmproxy"
+                    label={
+                        <Flex spaceItems={{ modifier: 'spaceItemsXl' }}>
+                            <FlexItem>{ _("Export to network") }</FlexItem>
+                            <TextContent>
+                                <Text component={TextVariants.small}>(pmproxy.service)</Text>
+                            </TextContent>
+                        </Flex>
+                    }
+                    isDisabled={ !dialogLoggerValue || !validServiceState(s_pmproxy) || !validServiceState(real_redis) }
+                    isChecked={dialogProxyValue}
+                    onChange={enable => setDialogProxyValue(enable)} />
+        );
+    }
+
+    return (
+        <>
+            <Button variant={buttonVariant} icon={<CogIcon />}
+                    isDisabled={ !persistentServiceState(s_pmlogger) }
+                    onClick={ () => {
+                        setDialogLoggerValue(s_pmlogger.state === 'running');
+                        const proxy_value = pmproxy_option ? (s_pmproxy.state === 'running' && real_redis.state === 'running') : null;
+                        setDialogInitialProxyValue(proxy_value);
+                        setDialogProxyValue(proxy_value);
+                        setDialogError(null);
+                        setDialogVisible(true);
+                    } }>
+                { _("Metrics settings") }
+            </Button>
+
+            {dialogVisible &&
+            <Modal position="top" variant="small" isOpen
+                   id="pcp-settings-modal"
+                   onClose={ () => setDialogVisible(false) }
+                   title={ _("Metrics settings") }
+                   description={
+                       <div className="pcp-settings-modal-text">
+                           { _("Performance Co-Pilot collects and analyzes performance metrics from your system.") }
+
+                           <Button component="a" variant="link" href="https://cockpit-project.org/guide/latest/feature-pcp.html"
+                                isInline
+                                target="_blank" rel="noopener noreferrer"
+                                icon={<ExternalLinkAltIcon />}>
+                               { _("Read more...") }
+                           </Button>
+                       </div>
+                   }
+                   footer={<>
+                       { dialogError && <ModalError dialogError={ _("Failed to configure PCP") } dialogErrorDetail={dialogError} /> }
+
+                       <Button variant='primary' onClick={handleSave} isDisabled={pending} isLoading={pending}>
+                           { _("Save") }
+                       </Button>
+                       <Button variant='link' className='btn-cancel' onClick={ () => setDialogVisible(false) }>
+                           {_("Cancel")}
+                       </Button>
+                   </>
+                   }>
+
+                <Switch id="switch-pmlogger"
+                        isChecked={dialogLoggerValue}
+                        label={
+                            <Flex spaceItems={{ modifier: 'spaceItemsXl' }}>
+                                <FlexItem>{ _("Collect metrics") }</FlexItem>
+                                <TextContent>
+                                    <Text component={TextVariants.small}>(pmlogger.service)</Text>
+                                </TextContent>
+                            </Flex>
+                        }
+                        onChange={enable => {
+                            // pmproxy needs pmlogger, auto-disable it
+                            setDialogLoggerValue(enable);
+                            if (!enable)
+                                setDialogProxyValue(false);
+                        }} />
+
+                {pmproxy_option}
+            </Modal>}
+        </>);
+};
+
 class MetricsHistory extends React.Component {
     constructor(props) {
         super(props);
@@ -881,6 +1054,7 @@ class MetricsHistory extends React.Component {
             hours: [], // available hours for rendering in descending order
             loading: true, // show loading indicator
             metricsAvailable: true,
+            pmLoggerState: null,
             error: null,
             isDatepickerOpened: false,
             selectedDate: null,
@@ -893,21 +1067,35 @@ class MetricsHistory extends React.Component {
         this.handleSelect = this.handleSelect.bind(this);
         this.handleInstall = this.handleInstall.bind(this);
 
-        // load and render the last 24 hours (plus current one) initially; this needs numCpu initialized for correct scaling
-        // FIXME: load less up-front, load more when scrolling
-        machine_info_promise.then(() => {
-            cockpit.spawn(["date", "+%s"])
-                    .then(out => {
-                        const now = parseInt(out.trim()) * 1000;
-                        const current_hour = Math.floor(now / MSEC_PER_H) * MSEC_PER_H;
-                        this.load_data(current_hour - LOAD_HOURS * MSEC_PER_H, undefined, true);
-                        this.today_midnight = new Date(current_hour).setHours(0, 0, 0, 0);
-                        this.setState({
-                            selectedDate: this.today_midnight,
-                        });
-                    })
-                    .catch(ex => this.setState({ error: ex.toString() }));
+        /* supervise pmlogger.service, to diagnose missing history */
+        this.pmlogger_service = service.proxy("pmlogger.service");
+        this.pmlogger_service.addEventListener("changed", () => {
+            if (persistentServiceState(this.pmlogger_service) && this.pmlogger_service.state !== this.state.pmLoggerState) {
+                // when it got enabled while the page is running (e.g. through Settings dialog), start data collection
+                if (!this.state.metricsAvailable && this.pmlogger_service.state === 'running')
+                    this.initialLoadData();
+                this.setState({ pmLoggerState: this.pmlogger_service.state });
+            }
         });
+
+        // FIXME: load less up-front, load more when scrolling
+        machine_info_promise.then(() => this.initialLoadData());
+    }
+
+    // load and render the last 24 hours (plus current one) initially; this needs numCpu initialized for correct scaling
+    initialLoadData() {
+        cockpit.spawn(["date", "+%s"])
+                .then(out => {
+                    const now = parseInt(out.trim()) * 1000;
+                    const current_hour = Math.floor(now / MSEC_PER_H) * MSEC_PER_H;
+                    this.load_data(current_hour - LOAD_HOURS * MSEC_PER_H, undefined, true);
+                    this.today_midnight = new Date(current_hour).setHours(0, 0, 0, 0);
+                    this.setState({
+                        metricsAvailable: true,
+                        selectedDate: this.today_midnight,
+                    });
+                })
+                .catch(ex => this.setState({ error: ex.toString() }));
     }
 
     componentDidMount() {
@@ -1039,6 +1227,7 @@ class MetricsHistory extends React.Component {
 
         metrics.addEventListener("close", (event, message) => {
             if (message.problem) {
+                debug("could not load metrics:", message.problem);
                 this.setState({
                     loading: false,
                     metricsAvailable: false,
@@ -1075,12 +1264,27 @@ class MetricsHistory extends React.Component {
                         title={_("Package cockpit-pcp is missing for metrics history")}
                         action={this.state.packagekitExists ? <Button onClick={() => this.handleInstall()}>{_("Install cockpit-pcp")}</Button> : null} />;
 
-        if (!this.state.metricsAvailable)
+        if (!this.state.metricsAvailable) {
+            let action;
+            let paragraph;
+
+            if (this.pmlogger_service.state === 'stopped') {
+                paragraph = _("pmlogger.service is not running");
+                action = <PCPConfig buttonVariant="primary" firewalldRequest={this.props.firewalldRequest} />;
+            } else {
+                if (this.pmlogger_service.state === 'failed')
+                    paragraph = _("pmlogger.service has failed");
+                else /* running, or initialization hangs */
+                    paragraph = _("pmlogger.service is failing to collect data");
+                action = <Button variant="link" onClick={() => cockpit.jump("/system/services#/pmlogger.service") }>{_("Troubleshoot")}</Button>;
+            }
+
             return <EmptyStatePanel
                         icon={ExclamationCircleIcon}
                         title={_("Metrics history could not be loaded")}
-                        paragraph={_("Is 'pmlogger' service running?")}
-                        action={<Button variant="link" onClick={() => cockpit.jump("/system/services#/pmlogger.service") }>{_("Troubleshoot")}</Button>} />;
+                        paragraph={paragraph}
+                        action={action} />;
+        }
 
         if (this.state.error)
             return <EmptyStatePanel
@@ -1146,7 +1350,7 @@ class MetricsHistory extends React.Component {
                         <div className="metrics-graphs">
                             <Label label={_("CPU")} items={[_("Usage"), _("Load")]} />
                             <Label label={_("Memory")} items={[_("Usage"), ...swapTotal !== undefined ? [_("Swap")] : []]} />
-                            <Label label={_("Disks")} items={[_("Usage")]} />
+                            <Label label={_("Disk I/O")} items={[_("Usage")]} />
                             <Label label={_("Network")} items={[_("Usage")]} />
                         </div>
                     </section>
@@ -1170,20 +1374,32 @@ class MetricsHistory extends React.Component {
     }
 }
 
-export const Application = () => (
-    <Page groupProps={{ sticky: 'top' }}
-          isBreadcrumbGrouped
-          breadcrumb={
-              <Breadcrumb>
-                  <BreadcrumbItem onClick={() => cockpit.jump("/system")} to="#">{_("Overview")}</BreadcrumbItem>
-                  <BreadcrumbItem isActive>{_("Performance Metrics")}</BreadcrumbItem>
-              </Breadcrumb>
+export const Application = () => {
+    const [firewalldRequest, setFirewalldRequest] = useState(null);
+
+    return <Page groupProps={{ sticky: 'top' }}
+          additionalGroupedContent={
+              <PageSection id="metrics-header-section" variant={PageSectionVariants.light}>
+                  <Flex>
+                      <FlexItem>
+                          <Breadcrumb>
+                              <BreadcrumbItem onClick={() => cockpit.jump("/system")} to="#">{_("Overview")}</BreadcrumbItem>
+                              <BreadcrumbItem isActive>{_("Performance Metrics")}</BreadcrumbItem>
+                          </Breadcrumb>
+                      </FlexItem>
+                      <FlexItem align={{ default: 'alignRight' }}>
+                          <PCPConfig buttonVariant="secondary" firewalldRequest={setFirewalldRequest} />
+                      </FlexItem>
+                  </Flex>
+              </PageSection>
           }>
+        { firewalldRequest &&
+            <FirewalldRequest service={firewalldRequest.service} title={firewalldRequest.title} pageSection /> }
         <PageSection>
             <CurrentMetrics />
         </PageSection>
         <PageSection>
-            <MetricsHistory />
+            <MetricsHistory firewalldRequest={setFirewalldRequest} />
         </PageSection>
-    </Page>
-);
+    </Page>;
+};

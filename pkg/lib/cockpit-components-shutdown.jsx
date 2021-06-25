@@ -133,7 +133,7 @@ export class ShutdownModal extends React.Component {
         this.date_spawn.finally(() => { this.date_spawn = null });
     }
 
-    onSubmit() {
+    onSubmit(event) {
         const arg = this.props.shutdown ? "--poweroff" : "--reboot";
         if (!this.props.shutdown)
             cockpit.hint("restart");
@@ -141,6 +141,9 @@ export class ShutdownModal extends React.Component {
         cockpit.spawn(["shutdown", arg, this.state.when, this.state.message], { superuser: true, err: "message" })
                 .then(this.props.onClose)
                 .catch(e => this.setState({ error: e }));
+
+        event.preventDefault();
+        return false;
     }
 
     render() {
@@ -167,7 +170,7 @@ export class ShutdownModal extends React.Component {
                    </>}
             >
                 <>
-                    <Form isHorizontal>
+                    <Form isHorizontal onSubmit={this.onSubmit}>
                         <FormGroup fieldId="message" label={_("Message to logged in users")}>
                             <TextArea id="message" resizeOrientation="vertical" value={this.state.message} onChange={v => this.setState({ message: v })} />
                         </FormGroup>
@@ -186,7 +189,7 @@ export class ShutdownModal extends React.Component {
                                                 className='shutdown-date-picker'
                                                 invalidFormatText="" dateParse={d => moment(d, 'L').toDate()}
                                                 value={moment(this.state.date).format('L')} onChange={(d, ds) => this.updateDatetime("date", ds)} />
-                                    <TimePicker defaultTime={this.state.time} is24Hour
+                                    <TimePicker time={this.state.time} is24Hour
                                                 className='shutdown-time-picker'
                                                 id="shutdown-time"
                                                 invalidFormatErrorMessage=""

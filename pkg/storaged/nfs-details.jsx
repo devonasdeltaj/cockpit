@@ -324,7 +324,7 @@ export class NFSDetails extends React.Component {
                     </CardActions>
                 </CardHeader>
                 <CardBody>
-                    <DescriptionList isHorizontal>
+                    <DescriptionList className="pf-m-horizontal-on-sm">
                         <DescriptionListGroup>
                             <DescriptionListTerm className="control-DescriptionListTerm">{_("Server")}</DescriptionListTerm>
                             <DescriptionListDescription>{entry.fields[0]}</DescriptionListDescription>
@@ -337,9 +337,9 @@ export class NFSDetails extends React.Component {
 
                         <DescriptionListGroup>
                             <DescriptionListTerm className="control-DescriptionListTerm">{_("Size")}</DescriptionListTerm>
-                            <DescriptionListDescription>
+                            <DescriptionListDescription className="pf-u-align-self-center">
                                 { entry.mounted
-                                    ? <StorageUsageBar stats={fsys_size} critical={0.95} />
+                                    ? <StorageUsageBar stats={fsys_size} critical={0.95} block={entry.fields[1]} />
                                     : "--"
                                 }
                             </DescriptionListDescription>

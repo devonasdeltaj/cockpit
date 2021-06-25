@@ -44,7 +44,7 @@ function debug() {
 
 class ImplBase {
     constructor() {
-        this.supported = true; // false if system was customed in a way that we cannot parse
+        this.supported = true; // false if system was customized in a way that we cannot parse
         this.enabled = null; // boolean
         this.type = null; // "all" or "security"
         this.day = null; // systemd.time(7) day of week (e. g. "mon"), or empty for daily
@@ -98,8 +98,8 @@ class DnfImpl extends ImplBase {
                         } else {
                             if (output.indexOf("InactiveSec=1d\n") >= 0)
                                 this.day = this.time = "";
-                            else
-                                this.parsing_failed = true;
+                            else if (this.installed)
+                                this.supported = false;
                         }
 
                         debug(`dnf getConfig: supported ${this.supported}, enabled ${this.enabled}, type ${this.type}, day ${this.day}, time ${this.time}, installed ${this.installed}; raw response '${output}'`);
@@ -135,7 +135,7 @@ class DnfImpl extends ImplBase {
         if (words.length == 1 && validTime.test(words[0]))
             this.time = words[0].replace(/^0+/, "");
         else
-            this.parsing_failed = true;
+            this.supported = false;
     }
 
     setConfig(enabled, type, day, time) {
@@ -225,12 +225,7 @@ export function getBackend(forceReinit) {
                             backend = new DnfImpl();
                         // TODO: apt backend
                         if (backend)
-                            backend.getConfig().then(() => {
-                                if (!backend.installed)
-                                    resolve(backend);
-                                else
-                                    resolve(backend.supported ? backend : null);
-                            });
+                            backend.getConfig().then(() => resolve(backend));
                         else
                             resolve(null);
                     })
@@ -260,7 +255,7 @@ export class AutoUpdates extends React.Component {
         this.handleChange = this.handleChange.bind(this);
     }
 
-    handleChange() {
+    handleChange(event) {
         const { enabled, type, day, time } = this.state;
 
         if (!validateTime(time))
@@ -271,6 +266,10 @@ export class AutoUpdates extends React.Component {
                 .always(() => {
                     this.setState({ pending: false, showModal: false });
                 });
+
+        if (event)
+            event.preventDefault();
+        return false;
     }
 
     render() {
@@ -279,7 +278,7 @@ export class AutoUpdates extends React.Component {
 
         const enabled = !this.state.pending && this.props.privileged;
         const body = (
-            <Form isHorizontal>
+            <Form isHorizontal onSubmit={this.handleChange}>
                 <FormGroup fieldId="type" label={_("Type")} hasNoPaddingTop>
                     <Radio isChecked={!this.state.enabled}
                            onChange={e => this.setState({ enabled: false, type: null })}
@@ -318,7 +317,7 @@ export class AutoUpdates extends React.Component {
 
                             <span className="auto-conf-text">{_("at")}</span>
 
-                            <TimePicker defaultTime={this.state.time} is24Hour
+                            <TimePicker time={this.state.time} is24Hour
                                         menuAppendTo={() => document.body}
                                         id="auto-update-time" isDisabled={!enabled}
                                         invalidFormatErrorMessage={_("Invalid time format")}
@@ -338,32 +337,36 @@ export class AutoUpdates extends React.Component {
             state = _("Not set up");
 
         const days = {
-            "": "every day",
-            mon: "every Monday",
-            tue: "every Tuesday",
-            wed: "every Wednesday",
-            thu: "every Thursday",
-            fri: "every Friday",
-            sat: "every Saturday",
-            sun: "every Sunday"
+            "": _("every day"),
+            mon: _("every Monday"),
+            tue: _("every Tuesday"),
+            wed: _("every Wednesday"),
+            thu: _("every Thursday"),
+            fri: _("every Friday"),
+            sat: _("every Saturday"),
+            sun: _("every Sunday")
         };
 
         let desc = null;
 
-        if (this.state.backend.enabled) {
+        if (this.state.backend.enabled && this.state.backend.supported) {
             desc = this.state.backend.type == "security" ? _("Security updates ") : _("Updates ");
             desc += cockpit.format(_("will be applied $0 at $1"), days[this.state.backend.day], this.state.backend.time);
         }
 
         const self = this;
 
+        if (enabled && this.state.backend.installed && !this.state.backend.supported)
+            return (
+                <div id="autoupdates-settings">
+                    <Alert isInline
+                        variant="info"
+                        className="autoupdates-card-error"
+                        title={_("Failed to parse unit files for dnf-automatic.timer or dnf-automatic-install.timer. Please remove custom overrides to configure automatic updates.")} />
+                </div>);
+
         return (<>
             <div id="autoupdates-settings">
-                {enabled && this.state.backend.parsing_failed &&
-                <Alert isInline
-                       variant="info"
-                       className="autoupdates-card-error"
-                       title={_("Failed to parse unit files for dnf-automatic.timer or dnf-automatic-install.timer. Please remove custom overrides to enable this feature.")} />}
                 <Flex alignItems={{ default: 'alignItemsCenter' }}>
                     <Flex grow={{ default: 'grow' }} alignItems={{ default: 'alignItemsBaseline' }}>
                         <FlexItem>
